@@ -68,13 +68,6 @@
 */
 #undef RIC_CONTROL_ACK
 
-#include <grpc/grpc.h>
-#include <grpcpp/channel.h>
-#include <grpcpp/client_context.h>
-#include <grpcpp/create_channel.h>
-#include <grpcpp/security/credentials.h>
-#include "protobuf/rc.grpc.pb.h"
-
 #include "utils/restclient.hpp"
 
 
@@ -91,7 +84,6 @@ using Keys = std::set<Key>;
 
 // ----------------------------------------------------------
 std::unique_ptr<Xapp> xfw;
-std::unique_ptr<rc::MsgComm::Stub> rc_stub;
 
 int downlink_threshold = 0;  // A1 policy type 20008 (in percentage)
 
@@ -603,73 +595,6 @@ void send_rest_control_request( string ue_id, string serving_cell_id, string tar
 
 }
 
-// sends a handover message to RC xApp through gRPC
-void send_grpc_control_request( string ue_id, string target_cell_id ) {
-  grpc::ClientContext context;
-
-  rc::RicControlGrpcRsp response;
-  shared_ptr<rc::RicControlGrpcReq> request = make_shared<rc::RicControlGrpcReq>();
-
-  rc::RICE2APHeader *apHeader = request->mutable_rice2apheaderdata();
-  apHeader->set_ranfuncid(3);
-  apHeader->set_ricrequestorid( 1 );
-
-  rc::RICControlHeader *ctrlHeader = request->mutable_riccontrolheaderdata();
-  ctrlHeader->set_controlstyle( 3 );
-  ctrlHeader->set_controlactionid( 1 );
-  rc::UeId *ueid =  ctrlHeader->mutable_ueid();
-  rc::gNBUEID* gnbue= ueid->mutable_gnbueid();
-  gnbue->set_amfuengapid(stoi(ue_id));
-  gnbue->add_gnbcuuef1apid(stoi(ue_id));
-  gnbue->add_gnbcucpuee1apid(stoi(ue_id));
-  rc::Guami* gumi=gnbue->mutable_guami();
-  //As of now hardcoded according to the value setted in VIAVI RSG TOOL
-  gumi->set_amfregionid("10100000");
-  gumi->set_amfsetid("0000000000");
-  gumi->set_amfpointer("000001");
-  
-  //ctrlHeader->set_ueid( ue_id );
-
-  rc::RICControlMessage *ctrlMsg = request->mutable_riccontrolmessagedata();
-  ctrlMsg->set_riccontrolcelltypeval( rc::RICControlCellTypeEnum::RIC_CONTROL_CELL_UNKWON );
-  //ctrlMsg->set_riccontrolcelltypeval( api::RIC_CONTROL_CELL_UNKWON);
-    
-    ctrlMsg->set_targetcellid( target_cell_id);
-
-  auto data = cell_map.find(target_cell_id);
-  if( data != cell_map.end() ) {
-    request->set_e2nodeid( data->second->global_nb_id.nb_id );
-    request->set_plmnid( data->second->global_nb_id.plmn_id );
-    request->set_ranname( data->second->ran_name );
-    gumi->set_plmnidentity(data->second->global_nb_id.plmn_id);
-  } else {
-    cout << "[INFO] Cannot find RAN name corresponding to cell id = "<<target_cell_id<<endl;
-    return;
-    request->set_e2nodeid( "unknown_e2nodeid" );
-    request->set_plmnid( "unknown_plmnid" );
-    request->set_ranname( "unknown_ranname" );
-    gumi->set_plmnidentity("unknown_plmnid");
-  }
-  request->set_riccontrolackreqval( rc::RICControlAckEnum::RIC_CONTROL_ACK_UNKWON );
-  //request->set_riccontrolackreqval( api::RIC_CONTROL_ACK_UNKWON);  // not yet used in api.proto
- cout<<"\nin ts xapp grpc message content \n"<< request->DebugString()<<"\n"; 
-  grpc::Status status = rc_stub->SendRICControlReqServiceGrpc( &context, *request, &response );
-
-  if( status.ok() ) {
-    if( response.rspcode() == 0 ) {
-      cout << "[INFO] Control Request succeeded with code=0, description=" << response.description() << endl;
-    } else {
-      cout << "[ERROR] Control Request failed with code=" << response.rspcode()
-           << ", description=" << response.description() << endl;
-    }
-
-  } else {
-    cout << "[ERROR] failed to send a RIC Control Request message to RC xApp, error_code="
-         << status.error_code() << ", error_msg=" << status.error_message() << endl;
-  }
-
-}
-
 void prediction_callback( Message& mbuf, int mtype, int subid, int len, Msg_component payload,  void* data ) {
   string json ((char *)payload.get(), len); // RMR payload might not have a nil terminanted char
 
@@ -723,11 +648,7 @@ void prediction_callback( Message& mbuf, int mtype, int subid, int len, Msg_comp
   if ( highest_throughput > ( serving_cell_throughput + thresh ) ) {
 
     // sending a control request message
-    if ( ts_control_api == TsControlApi::REST ) {
-      send_rest_control_request( handler.ue_id, handler.serving_cell_id, highest_throughput_cell_id );
-    } else {
-      send_grpc_control_request( handler.ue_id, highest_throughput_cell_id );
-    }
+    send_rest_control_request( handler.ue_id, handler.serving_cell_id, highest_throughput_cell_id );
 
   } else {
     cout << "[INFO] The current serving cell \"" << handler.serving_cell_id << "\" is the best one" << endl;
@@ -873,7 +794,6 @@ bool build_cell_mapping() {
 extern int main( int argc, char** argv ) {
   int nthreads = 1;
   char*	port = (char *) "4560";
-  shared_ptr<grpc::Channel> channel;
 
   Config *config = new Config();
   string api = config->Get_control_str("ts_control_api");
@@ -885,14 +805,8 @@ extern int main( int argc, char** argv ) {
   if ( api.compare("rest") == 0 ) {
     ts_control_api = TsControlApi::REST;
   } else {
-    ts_control_api = TsControlApi::gRPC;
-
-    if( !build_cell_mapping() ) {
-      cout << "[ERROR] unable to map cells to nodeb\n";
-    }
-
-    channel = grpc::CreateChannel(ts_control_ep, grpc::InsecureChannelCredentials());
-    rc_stub = rc::MsgComm::NewStub(channel, grpc::StubOptions());
+    cerr << "[ERROR] gRPC not supported\n";
+    exit(EXIT_FAILURE);
   }
 
   fprintf( stderr, "[INFO] listening on port %s\n", port );

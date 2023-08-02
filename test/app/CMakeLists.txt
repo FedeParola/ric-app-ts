@@ -46,16 +46,3 @@ target_link_libraries(
   pthread
   curl
 )
-
-find_package(Protobuf REQUIRED)
-add_subdirectory(${CMAKE_SOURCE_DIR}/../../ext/protobuf EXCLUDED_FROM_ALL)
-add_executable(
-  rc_xapp
-  rc_xapp.cpp
-)
-target_link_libraries(
-  rc_xapp
-  rc_objects
-  grpc++
-  ${Protobuf_LIBRARY}
-)

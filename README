@@ -58,7 +58,7 @@ but they can be built according to the following:
 
 1. Build the TS xApp
 2. $cd test/app/
-3. $cmake -S . -B build
+3. $cmake -S . -B .build
 4. $cd build/
 5. $make
 
