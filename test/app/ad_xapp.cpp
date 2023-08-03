@@ -32,34 +32,31 @@
 #include <thread>
 #include <unistd.h>
 #include <string.h>
+#include <time.h>
 
 #include <rmr/RIC_message_types.h>
 #include "ricxfcpp/xapp.hpp"
+
+#define ITERATIONS 20
 
 using namespace std;
 using namespace xapp;
 
 unique_ptr<Xapp> xfw;
+static struct timespec start;
+static unsigned it = 0;
+static unsigned long total = 0;
 
-void ts_callback( Message& mbuf, int mtype, int subid, int len, Msg_component payload,  void* data ) {
-    string json ((char *)payload.get(), len);
-
-    cout << "[AD] TS Callback got a message, type=" << mtype << ", length=" << len << "\n";
-    cout << "[AD] Payload  is  " << json << endl;
-
-    // we only send one message, so we expect to receive only one as well
-    xfw->Stop();
-}
-
-// this thread just sends out one anomaly message to the TS xApp
-void ad_loop() {
+static void send_anomaly() {
     std::unique_ptr<Message> msg;
     Msg_component payload;
     int size;
     int plen;
 
-    cout << "[AD] In Anomaly Detection ad_loop()\n";
-    sleep( 1 ); // just wait receiver thread starting up
+    if (clock_gettime(CLOCK_MONOTONIC, &start)) {
+        cerr << "[ERROR] Cannot get time\n";
+        exit(EXIT_FAILURE);
+    }
 
     msg = xfw->Alloc_msg(2048);
     size = msg->Get_available_size();
@@ -75,12 +72,52 @@ void ad_loop() {
     snprintf( (char *) payload.get(), 2048, "%s", ad_msg );
 
     plen = strlen( (char *) payload.get() );
-    cout << "[AD] Sending a message to TS, length: " << plen << "\n";
-    cout << "[AD] Message body " << payload.get() << endl;
+    // cout << "[AD] Sending a message to TS, length: " << plen << "\n";
+    // cout << "[AD] Message body " << payload.get() << endl;
 
     // payload updated in place, nothing to copy from, so payload parm is nil
     if ( ! msg->Send_msg( TS_ANOMALY_UPDATE, Message::NO_SUBID, plen, nullptr ) ) // msg type 30003
         cout << "[ERROR] Unable to send a message to TS xApp, state: " << msg->Get_state() << endl;
+}
+
+void send_first_anomaly() {
+    sleep(1); // just wait receiver thread starting up
+
+    send_anomaly();
+}
+
+void ts_callback( Message& mbuf, int mtype, int subid, int len, Msg_component payload,  void* data ) {
+    string json ((char *)payload.get(), len);
+
+    // cout << "[AD] TS Callback got a message, type=" << mtype << ", length=" << len << "\n";
+    // cout << "[AD] Payload  is  " << json << endl;
+
+    struct timespec stop;
+    if (clock_gettime(CLOCK_MONOTONIC, &stop)) {
+        cerr << "[ERROR] Cannot get time\n";
+        exit(EXIT_FAILURE);
+    }
+
+    unsigned long latency = (stop.tv_sec - start.tv_sec) * 1000000000
+                            + stop.tv_nsec - start.tv_nsec;
+
+    cout << "[AD] Control loop " << it << " took " << latency << " ns\n";
+
+    if (it > 0)
+        total += latency;
+
+    if (++it >= ITERATIONS) {
+        xfw->Stop();
+
+        cout << "[AD] Average latency (excluding 1st loop) "
+             << (total / (ITERATIONS - 1)) << " ns\n";
+
+        return;
+    }
+
+    usleep(500000);
+
+    send_anomaly();
 }
 
 int main(int argc, char const *argv[]) {
@@ -94,7 +131,7 @@ int main(int argc, char const *argv[]) {
     xfw->Add_msg_cb( TS_ANOMALY_ACK, ts_callback, NULL ); /*Register a callback function for msg type 30004*/
 
     std::thread ad_thread;
-    ad_thread = std::thread(&ad_loop);
+    ad_thread = std::thread(&send_first_anomaly);
 
     xfw->Run( nthreads );
 

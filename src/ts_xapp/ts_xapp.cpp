@@ -102,6 +102,8 @@ typedef struct nodeb {
 
 unordered_map<string, shared_ptr<nodeb_t>> cell_map; // maps each cell to its nodeb
 
+static Message ad_mbuf(nullptr, nullptr);
+
 /* struct UEData {
   string serving_cell;
   int serving_cell_rsrp;
@@ -564,8 +566,8 @@ void send_rest_control_request( string ue_id, string serving_cell_id, string tar
 
   string msg = s.GetString();
 
-  cout << "[INFO] Sending a HandOff CONTROL message to \"" << ts_control_ep << "\"\n";
-  cout << "[INFO] HandOff request is " << msg << endl;
+  // cout << "[INFO] Sending a HandOff CONTROL message to \"" << ts_control_ep << "\"\n";
+  // cout << "[INFO] HandOff request is " << msg << endl;
 
   try {
     // sending request
@@ -580,7 +582,7 @@ void send_rest_control_request( string ue_id, string serving_cell_id, string tar
         rapidjson::StringBuffer s;
         rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(s);
         document.Accept( writer );
-        cout << "[INFO] HandOff reply is " << s.GetString() << endl;
+        // cout << "[INFO] HandOff reply is " << s.GetString() << endl;
 
     } else {
         cout << "[ERROR] Unexpected HTTP code " << resp.status_code << " from " << \
@@ -593,13 +595,14 @@ void send_rest_control_request( string ue_id, string serving_cell_id, string tar
 
   }
 
+  ad_mbuf.Send_response( TS_ANOMALY_ACK, Message::NO_SUBID, 0, nullptr );  // msg type 30004
 }
 
 void prediction_callback( Message& mbuf, int mtype, int subid, int len, Msg_component payload,  void* data ) {
   string json ((char *)payload.get(), len); // RMR payload might not have a nil terminanted char
 
-  cout << "[INFO] Prediction Callback got a message, type=" << mtype << ", length=" << len << "\n";
-  cout << "[INFO] Payload is " << json << endl;
+  // cout << "[INFO] Prediction Callback got a message, type=" << mtype << ", length=" << len << "\n";
+  // cout << "[INFO] Payload is " << json << endl;
 
   PredictionHandler handler;
   try {
@@ -651,7 +654,8 @@ void prediction_callback( Message& mbuf, int mtype, int subid, int len, Msg_comp
     send_rest_control_request( handler.ue_id, handler.serving_cell_id, highest_throughput_cell_id );
 
   } else {
-    cout << "[INFO] The current serving cell \"" << handler.serving_cell_id << "\" is the best one" << endl;
+    // we always send a control request for testing purposes
+    send_rest_control_request( handler.ue_id, handler.serving_cell_id, highest_throughput_cell_id );
   }
 
 }
@@ -690,7 +694,7 @@ void send_prediction_request( vector<string> ues_to_predict ) {
 
   plen = strlen( (char *)send_payload.get() );
 
-  cout << "[INFO] Prediction Request length=" << plen << ", payload=" << send_payload.get() << endl;
+  // cout << "[INFO] Prediction Request length=" << plen << ", payload=" << send_payload.get() << endl;
 
   // payload updated in place, nothing to copy from, so payload parm is nil
   if ( ! msg->Send_msg( TS_UE_LIST, Message::NO_SUBID, plen, NULL )) { // msg type 30000
@@ -706,16 +710,17 @@ void send_prediction_request( vector<string> ues_to_predict ) {
 void ad_callback( Message& mbuf, int mtype, int subid, int len, Msg_component payload, void* data ) {
   string json ((char *)payload.get(), len); // RMR payload might not have a nil terminanted char
 
-  cout << "[INFO] AD Callback got a message, type=" << mtype << ", length=" << len << "\n";
-  cout << "[INFO] Payload is " << json << "\n";
+  // cout << "[INFO] AD Callback got a message, type=" << mtype << ", length=" << len << "\n";
+  // cout << "[INFO] Payload is " << json << "\n";
 
   AnomalyHandler handler;
   Reader reader;
   StringStream ss(json.c_str());
   reader.Parse(ss,handler);
 
-  // just sending ACK to the AD xApp
-  mbuf.Send_response( TS_ANOMALY_ACK, Message::NO_SUBID, len, nullptr );  // msg type 30004
+  // save the mbuf and send ack after control request is completed so the AD can
+  // compute the latency of the whole control loop
+  ad_mbuf = move(mbuf);
 
   send_prediction_request(handler.prediction_ues);
 }

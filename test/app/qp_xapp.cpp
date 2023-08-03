@@ -55,8 +55,8 @@ unique_ptr<Xapp> xfw;
 void prediction_callback( Message& mbuf, int mtype, int subid, int len, Msg_component payload,  void* data ) {
     string json ((char *) payload.get(), len);
 
-    cout << "[QP] Prediction Callback got a message, type=" << mtype << ", length=" << len << "\n";
-    cout << "[QP] Payload is " << json << endl;
+    // cout << "[QP] Prediction Callback got a message, type=" << mtype << ", length=" << len << "\n";
+    // cout << "[QP] Payload is " << json << endl;
 
     Document document;
     document.Parse(json.c_str());
@@ -78,8 +78,8 @@ void prediction_callback( Message& mbuf, int mtype, int subid, int len, Msg_comp
 
         int len = body.size();
 
-        cout << "[QP] Sending a message to TS, length=" << len << "\n";
-        cout << "[QP] Message body " << body << endl;
+        // cout << "[QP] Sending a message to TS, length=" << len << "\n";
+        // cout << "[QP] Message body " << body << endl;
 
         // payload updated in place, nothing to copy from, so payload parm is nil
         if ( ! mbuf.Send_response( TS_QOE_PREDICTION, Message::NO_SUBID, len, (unsigned char *) body.c_str() ) ) // msg type 30002
