@@ -46,3 +46,8 @@ target_link_libraries(
   pthread
   curl
 )
+
+add_executable(
+  rc_xapp
+  rc_xapp.cpp
+)
